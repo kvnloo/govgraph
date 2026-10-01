@@ -171,7 +171,71 @@ def get_sam_entity(uei: Optional[str] = None, vendor_name: Optional[str] = None)
     return None
 
 
-def resolve_vendor(vendor_name: Optional[str], duns: Optional[str] = None, uei: Optional[str] = None, conn: Optional[psycopg2.extensions.connection] = None) -> Tuple[Optional[str], Optional[str], str, float]:
+def log_resolution_decision(
+    conn: psycopg2.extensions.connection,
+    source_vendor_name: Optional[str],
+    vendor_id: Optional[str],
+    method: str,
+    confidence: float,
+) -> None:
+    """Persist a queryable receipt for a completed entity-resolution decision."""
+    if not source_vendor_name:
+        logger.warning("Skipping entity-resolution audit row without a source vendor name")
+        return
+
+    llm_model = BEDROCK_MODEL_ID if method.startswith("LLM_") else None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO entity_resolution_log (
+                    id,
+                    source_vendor_name,
+                    resolved_vendor_id,
+                    resolution_method,
+                    llm_model,
+                    confidence_score,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                """,
+                (
+                    str(uuid.uuid4()),
+                    source_vendor_name,
+                    vendor_id,
+                    method,
+                    llm_model,
+                    confidence,
+                ),
+            )
+    except Exception:
+        logger.exception(
+            "Failed to persist entity-resolution audit record for %s",
+            source_vendor_name,
+        )
+
+
+def resolve_vendor(
+    vendor_name: Optional[str],
+    duns: Optional[str] = None,
+    uei: Optional[str] = None,
+    conn: Optional[psycopg2.extensions.connection] = None,
+) -> Tuple[Optional[str], Optional[str], str, float]:
+    """Resolve a vendor and persist the resulting provenance receipt."""
+    result = _resolve_vendor(vendor_name, duns=duns, uei=uei, conn=conn)
+    if conn is not None:
+        vendor_id, _, method, confidence = result
+        log_resolution_decision(
+            conn,
+            source_vendor_name=vendor_name,
+            vendor_id=vendor_id,
+            method=method,
+            confidence=confidence,
+        )
+    return result
+
+
+def _resolve_vendor(vendor_name: Optional[str], duns: Optional[str] = None, uei: Optional[str] = None, conn: Optional[psycopg2.extensions.connection] = None) -> Tuple[Optional[str], Optional[str], str, float]:
     """
     6-Tier Resolution Strategy:
     1. DynamoDB cache lookup (Fast-path for previously resolved messy names)
