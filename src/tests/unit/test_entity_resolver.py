@@ -98,6 +98,19 @@ def test_resolve_vendor_exact_uei_match(mocker, mock_conn):
     assert name == 'EXISTING CORP'
     assert method == 'DUNS_UEI_MATCH'
 
+    audit_calls = [
+        call
+        for call in cur.execute.call_args_list
+        if 'entity_resolution_log' in call.args[0]
+    ]
+    assert len(audit_calls) == 1
+    audit_params = audit_calls[0].args[1]
+    assert audit_params[1] == 'Existing Corp Inc'
+    assert audit_params[2] == 'uuid-123'
+    assert audit_params[3] == 'DUNS_UEI_MATCH'
+    assert audit_params[4] is None
+    assert audit_params[5] == 1.0
+
 
 def test_resolve_vendor_cache_match(mocker, mock_conn):
     conn, cur = mock_conn

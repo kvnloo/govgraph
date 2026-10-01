@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS entity_resolution_log (
     llm_prompt_tokens INTEGER,
     llm_completion_tokens INTEGER,
     confidence_score DECIMAL(3,2),
+    resolution_method VARCHAR(50),
     
     reasoning TEXT,
     alternative_matches JSONB,
@@ -144,6 +145,14 @@ CREATE TABLE IF NOT EXISTS entity_resolution_log (
     
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Existing deployments may already have the audit table from an older schema.
+ALTER TABLE entity_resolution_log
+    ADD COLUMN IF NOT EXISTS resolution_method VARCHAR(50);
+CREATE INDEX IF NOT EXISTS idx_entity_resolution_log_created_at
+    ON entity_resolution_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_entity_resolution_log_method
+    ON entity_resolution_log(resolution_method);
 
 -- 7. Neo4j Sync Status
 CREATE TABLE IF NOT EXISTS neo4j_sync_status (
