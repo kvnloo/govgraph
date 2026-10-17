@@ -3,7 +3,11 @@ import os
 import uuid
 import pytest
 from unittest.mock import MagicMock, patch
-from src.processing.entity_resolver import resolve_vendor, get_sam_entity
+from src.processing.entity_resolver import (
+    get_sam_entity,
+    log_resolution_decision,
+    resolve_vendor,
+)
 
 
 @pytest.fixture
@@ -98,6 +102,19 @@ def test_resolve_vendor_exact_uei_match(mocker, mock_conn):
     assert name == 'EXISTING CORP'
     assert method == 'DUNS_UEI_MATCH'
 
+    audit_calls = [
+        call
+        for call in cur.execute.call_args_list
+        if 'entity_resolution_log' in call.args[0]
+    ]
+    assert len(audit_calls) == 1
+    audit_params = audit_calls[0].args[1]
+    assert audit_params[1] == 'Existing Corp Inc'
+    assert audit_params[2] == 'uuid-123'
+    assert audit_params[3] == 'DUNS_UEI_MATCH'
+    assert audit_params[4] is None
+    assert audit_params[5] == 1.0
+
 
 def test_resolve_vendor_cache_match(mocker, mock_conn):
     conn, cur = mock_conn
@@ -166,3 +183,60 @@ def test_resolve_vendor_fuzzy_match(mocker, mock_conn):
     
     # Total 3 DB calls (ID check, Name check, Matched name lookup)
     assert cur.fetchone.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "autocommit, fail, expected",
+    [
+        (True, False, ["INSERT"]),
+        (True, True, ["INSERT"]),
+        (False, False, ["SAVEPOINT", "INSERT", "RELEASE"]),
+        (False, True, ["SAVEPOINT", "INSERT", "ROLLBACK", "RELEASE"]),
+    ],
+)
+def test_audit_insert_isolated_from_caller_transaction(
+    mock_conn, autocommit, fail, expected
+):
+    """Audit failures must not poison a caller-managed PostgreSQL transaction."""
+    conn, cur = mock_conn
+    conn.autocommit = autocommit
+
+    def execute(sql, *args):
+        if fail and "INSERT INTO entity_resolution_log" in sql:
+            raise RuntimeError("simulated audit insert failure")
+
+    cur.execute.side_effect = execute
+    log_resolution_decision(conn, "Example Vendor", "vendor-123", "DUNS_UEI_MATCH", 1.0)
+
+    statements = [
+        call.args[0].strip().split()[0] for call in cur.execute.call_args_list
+    ]
+    assert statements == expected
+
+
+@pytest.mark.parametrize("autocommit", [False, True])
+def test_resolve_vendor_survives_failed_audit(mocker, mock_conn, autocommit):
+    """A failed best-effort audit write must not change a resolved vendor."""
+    conn, cur = mock_conn
+    conn.autocommit = autocommit
+    decision = ("vendor-123", "ACME CORPORATION", "DUNS_UEI_MATCH", 1.0)
+    mocker.patch(
+        "src.processing.entity_resolver._resolve_vendor",
+        return_value=decision,
+    )
+
+    def execute(sql, *args):
+        if "INSERT INTO entity_resolution_log" in sql:
+            raise RuntimeError("simulated audit failure")
+
+    cur.execute.side_effect = execute
+
+    assert resolve_vendor("ACME", conn=conn) == decision
+    statements = [
+        call.args[0].strip().split()[0] for call in cur.execute.call_args_list
+    ]
+    assert statements == (
+        ["INSERT"]
+        if autocommit
+        else ["SAVEPOINT", "INSERT", "ROLLBACK", "RELEASE"]
+    )
