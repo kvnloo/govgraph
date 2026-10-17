@@ -3,7 +3,7 @@ import os
 import uuid
 import pytest
 from unittest.mock import MagicMock, patch
-from src.processing.entity_resolver import resolve_vendor, get_sam_entity
+from src.processing.entity_resolver import resolve_vendor, get_sam_entity, log_resolution_decision
 
 
 @pytest.fixture
@@ -179,3 +179,30 @@ def test_resolve_vendor_fuzzy_match(mocker, mock_conn):
     
     # Total 3 DB calls (ID check, Name check, Matched name lookup)
     assert cur.fetchone.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "autocommit, fail, expected",
+    [
+        (True, False, ["INSERT"]),
+        (True, True, ["INSERT"]),
+        (False, False, ["SAVEPOINT", "INSERT", "RELEASE"]),
+        (False, True, ["SAVEPOINT", "INSERT", "ROLLBACK", "RELEASE"]),
+    ],
+)
+def test_audit_insert_isolated_from_caller_transaction(
+    mock_conn, autocommit, fail, expected
+):
+    """Audit failures must not poison a caller-managed PostgreSQL transaction."""
+    conn, cur = mock_conn
+    conn.autocommit = autocommit
+
+    def execute(sql, *args):
+        if fail and "INSERT INTO entity_resolution_log" in sql:
+            raise RuntimeError("simulated audit insert failure")
+
+    cur.execute.side_effect = execute
+    log_resolution_decision(conn, "Example Vendor", "vendor-123", "DUNS_UEI_MATCH", 1.0)
+
+    statements = [call.args[0].strip().split()[0] for call in cur.execute.call_args_list]
+    assert statements == expected
