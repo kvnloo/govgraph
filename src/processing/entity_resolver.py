@@ -186,34 +186,45 @@ def log_resolution_decision(
     llm_model = BEDROCK_MODEL_ID if method.startswith("LLM_") else None
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO entity_resolution_log (
-                    id,
-                    source_vendor_name,
-                    resolved_vendor_id,
-                    resolution_method,
-                    llm_model,
-                    confidence_score,
-                    created_at
+            # An INSERT failure must not abort the caller's other DB writes.
+            transactional = not conn.autocommit
+            if transactional:
+                cur.execute("SAVEPOINT entity_resolution_audit")
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO entity_resolution_log (
+                        id,
+                        source_vendor_name,
+                        resolved_vendor_id,
+                        resolution_method,
+                        llm_model,
+                        confidence_score,
+                        created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        source_vendor_name,
+                        vendor_id,
+                        method,
+                        llm_model,
+                        confidence,
+                    ),
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                """,
-                (
-                    str(uuid.uuid4()),
-                    source_vendor_name,
-                    vendor_id,
-                    method,
-                    llm_model,
-                    confidence,
-                ),
-            )
+            except Exception:
+                if transactional:
+                    cur.execute("ROLLBACK TO SAVEPOINT entity_resolution_audit")
+                raise
+            finally:
+                if transactional:
+                    cur.execute("RELEASE SAVEPOINT entity_resolution_audit")
     except Exception:
         logger.exception(
             "Failed to persist entity-resolution audit record for %s",
             source_vendor_name,
         )
-
 
 def resolve_vendor(
     vendor_name: Optional[str],
