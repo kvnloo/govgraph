@@ -212,3 +212,31 @@ def test_audit_insert_isolated_from_caller_transaction(
         call.args[0].strip().split()[0] for call in cur.execute.call_args_list
     ]
     assert statements == expected
+
+
+@pytest.mark.parametrize("autocommit", [False, True])
+def test_resolve_vendor_survives_failed_audit(mocker, mock_conn, autocommit):
+    """A failed best-effort audit write must not change a resolved vendor."""
+    conn, cur = mock_conn
+    conn.autocommit = autocommit
+    decision = ("vendor-123", "ACME CORPORATION", "DUNS_UEI_MATCH", 1.0)
+    mocker.patch(
+        "src.processing.entity_resolver._resolve_vendor",
+        return_value=decision,
+    )
+
+    def execute(sql, *args):
+        if "INSERT INTO entity_resolution_log" in sql:
+            raise RuntimeError("simulated audit failure")
+
+    cur.execute.side_effect = execute
+
+    assert resolve_vendor("ACME", conn=conn) == decision
+    statements = [
+        call.args[0].strip().split()[0] for call in cur.execute.call_args_list
+    ]
+    assert statements == (
+        ["INSERT"]
+        if autocommit
+        else ["SAVEPOINT", "INSERT", "ROLLBACK", "RELEASE"]
+    )
