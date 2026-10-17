@@ -15,9 +15,10 @@ Tracked via registry PR https://github.com/kvnloo/oss-factory/pull/191 (provisio
 
 - Fork draft PR: https://github.com/kvnloo/govgraph/pull/1; **no origin PR**.
 - Requirement: README promises an audit log of entity resolution; SQL table exists but resolver previously did not persist completed decisions.
-- Branch: `civic/entity-resolution-audit` @ `42d12f54d772a94ab5cab8472f4070a03793635d`.
-- Change: audit receipt fields, migration-safe schema, savepoint-guarded insertion when autocommit is disabled, and four mock test cases.
-- Gap: full pytest + real PostgreSQL rollback/commit verification not executed; no data-pipeline benchmark. Do **not** claim production correctness.
+- Branch: `civic/entity-resolution-audit` @ `22aee0fc6fb771511432f6ae4ac131f9f634fa4a`.
+- Change: audit receipt fields, migration-safe schema, savepoint-guarded insertion for non-autocommit connections, and **six committed pytest-mock regression cases** (four SQL-command paths plus two wrapper-preservation cases).
+- Independent scoped SQLite-adapter harness (copy of changed audit function and wrapper) executed locally: **7 passed in 0.04s** (2026-10-17). This is not the repository test suite or a real PostgreSQL integration test.
+- Gap: native Python 3.12 pytest + real PostgreSQL rollback/commit verification not executed; no data-pipeline benchmark. Do **not** claim production correctness.
 - Next: run exact-head tests on Python 3.12/PostgreSQL; verify duplicate IDs, write costs and rollback behavior; only then consider bounded origin promotion.
 
 ## Release gates
