@@ -3,7 +3,11 @@ import os
 import uuid
 import pytest
 from unittest.mock import MagicMock, patch
-from src.processing.entity_resolver import resolve_vendor, get_sam_entity, log_resolution_decision
+from src.processing.entity_resolver import (
+    get_sam_entity,
+    log_resolution_decision,
+    resolve_vendor,
+)
 
 
 @pytest.fixture
@@ -204,5 +208,7 @@ def test_audit_insert_isolated_from_caller_transaction(
     cur.execute.side_effect = execute
     log_resolution_decision(conn, "Example Vendor", "vendor-123", "DUNS_UEI_MATCH", 1.0)
 
-    statements = [call.args[0].strip().split()[0] for call in cur.execute.call_args_list]
+    statements = [
+        call.args[0].strip().split()[0] for call in cur.execute.call_args_list
+    ]
     assert statements == expected
